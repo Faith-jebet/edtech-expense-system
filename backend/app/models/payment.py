@@ -9,7 +9,7 @@ class Payment(db.Model):
     __tablename__ = 'payments'
     
     id = db.Column(db.Integer, primary_key=True)
-    request_id = db.Column(db.Integer, db.ForeignKey('expense_requests.id'), nullable=False, unique=True, index=True)
+    request_id = db.Column(db.Integer, db.ForeignKey('expense_requests.id'), nullable=False, index=True)
     paid_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
     
     # Payment details
@@ -34,7 +34,7 @@ class Payment(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # Relationships
-    request = db.relationship('ExpenseRequest', back_populates='payment')
+    request = db.relationship('ExpenseRequest', back_populates='payments')
     paid_by = db.relationship('User', foreign_keys=[paid_by_id], back_populates='payments_made')
     posted_by = db.relationship('User', foreign_keys=[posted_by_id])
     receipt_attachment = db.relationship('Attachment', foreign_keys=[receipt_attachment_id])

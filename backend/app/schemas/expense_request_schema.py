@@ -147,13 +147,14 @@ class ExpenseRequestSchema(Schema):
     items = fields.List(fields.Nested(RequestItemSchema), required=True)
     attachments = fields.List(fields.Nested(AttachmentSchema), dump_only=True)
     approvals = fields.List(fields.Nested(ApprovalSchema), dump_only=True)
-    payment = fields.Nested(PaymentSchema, dump_only=True, allow_none=True)
+    payments = fields.List(fields.Nested(PaymentSchema), dump_only=True, allow_none=True)
 
 
 class ExpenseRequestCreateSchema(Schema):
     """Schema for creating an expense request."""
     department = fields.Str(allow_none=True)
-    project_id = fields.Int(required=True)
+    project_id = fields.Int(required=False, allow_none=True)
+    new_project_name = fields.Str(required=False, allow_none=True)
     category_id = fields.Int(required=True)
     priority = fields.Str(required=True, validate=validate.OneOf(['Normal', 'Urgent']))
     
@@ -180,7 +181,7 @@ class ExpenseRequestCreateSchema(Schema):
 
 class ApprovalActionSchema(Schema):
     """Schema for approval/rejection action."""
-    decision = fields.Str(required=True, validate=validate.OneOf(['Approved', 'Rejected']))
+    decision = fields.Str(required=True, validate=validate.OneOf(['Approved', 'Rejected', 'Verified']))
     comments = fields.Str(allow_none=True)
     signature_text = fields.Str(allow_none=True)
     rejection_reason = fields.Str(allow_none=True)

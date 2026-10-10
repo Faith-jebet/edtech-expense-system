@@ -15,6 +15,7 @@ class ExpenseRequest(db.Model):
     STATUS_VERIFIED = 'Verified'
     STATUS_APPROVED = 'Approved'
     STATUS_REJECTED = 'Rejected'
+    STATUS_PARTIALLY_PAID = 'Partially Paid'
     STATUS_PAID = 'Paid'
     STATUS_POSTED = 'Posted'
     STATUS_CLOSED = 'Closed'
@@ -25,6 +26,7 @@ class ExpenseRequest(db.Model):
         STATUS_VERIFIED,
         STATUS_APPROVED,
         STATUS_REJECTED,
+        STATUS_PARTIALLY_PAID,
         STATUS_PAID,
         STATUS_POSTED,
         STATUS_CLOSED
@@ -84,7 +86,7 @@ class ExpenseRequest(db.Model):
                                  cascade='all, delete-orphan')
     approvals = db.relationship('Approval', back_populates='request', lazy='dynamic',
                                cascade='all, delete-orphan')
-    payment = db.relationship('Payment', back_populates='request', uselist=False,
+    payments = db.relationship('Payment', back_populates='request', lazy='dynamic',
                              cascade='all, delete-orphan')
     advance = db.relationship('Advance', back_populates='request', uselist=False,
                              cascade='all, delete-orphan')
@@ -130,12 +132,16 @@ class ExpenseRequest(db.Model):
                 return False, "Separation of duties: requester cannot reject their own request"
             if self.status == self.STATUS_SUBMITTED and not user.can_verify():
                 return False, "Only an Accountant can reject a submitted request"
-            if self.status in [self.STATUS_VERIFIED, self.STATUS_APPROVED] and not user.can_approve(float(self.total_amount_usd)):
-                return False, "Only an authorized Approver can reject this request"
+            if self.status == self.STATUS_VERIFIED and not user.can_approve(float(self.total_amount_usd)):
+                return False, "Only an authorized Approver can reject this verified request"
+            if self.status == self.STATUS_APPROVED and not (user.can_approve(float(self.total_amount_usd)) or user.can_pay()):
+                return False, "Only an authorized Approver or Paying Officer can reject this approved request"
             return True, None
         
-        # Approved -> Paid: paying officer can pay
-        if self.status == self.STATUS_APPROVED and new_status == self.STATUS_PAID:
+        # Approved/Partially Paid -> Partially Paid/Paid: paying officer can pay
+        if new_status in [self.STATUS_PARTIALLY_PAID, self.STATUS_PAID]:
+            if self.status not in [self.STATUS_APPROVED, self.STATUS_PARTIALLY_PAID]:
+                return False, f"Cannot execute payment for request in status {self.status}"
             if not user.can_pay():
                 return False, "Only a Paying Officer can execute payments"
             if user.id == self.requester_id:
@@ -180,11 +186,11 @@ class ExpenseRequest(db.Model):
         
         # Standard approval routing
         if amount <= 100:
-            return [User.ROLE_OPERATION_MANAGER, User.ROLE_MANAGER, User.ROLE_DIRECTOR, User.ROLE_MANAGING_DIRECTOR]
+            return [User.ROLE_OPERATION_MANAGER, User.ROLE_MANAGER]
         elif amount <= 500:
-            return [User.ROLE_DIRECTOR, User.ROLE_MANAGING_DIRECTOR]
+            return [User.ROLE_DIRECTOR]
         else:
-            return [User.ROLE_DIRECTOR, User.ROLE_MANAGING_DIRECTOR]
+            return [User.ROLE_MANAGING_DIRECTOR]
     
     def __repr__(self):
         return f'<ExpenseRequest {self.request_id} ({self.status})>'

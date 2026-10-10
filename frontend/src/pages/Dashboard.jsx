@@ -12,7 +12,7 @@ import {
   BarChart, Bar, Cell, PieChart, Pie, Legend
 } from 'recharts';
 
-const COLORS = ['#0f172a', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#0ea5e9', '#ec4899', '#14b8a6', '#f97316', '#6366f1'];
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -271,6 +271,23 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Role Tasks Summary */}
+      <div className="card min-w-0 mb-6">
+        <h2 className="text-xl font-serif font-semibold text-ink mb-6">
+          Pending Tasks by Role
+        </h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          {stats?.role_tasks && Object.entries(stats.role_tasks).map(([role, count]) => (
+            <div key={role} className="bg-gray-50 rounded-lg p-4 border border-line flex flex-col items-center text-center">
+              <span className="text-sm font-medium text-muted mb-2">{role}</span>
+              <span className={`text-2xl font-bold ${count > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                {count}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 

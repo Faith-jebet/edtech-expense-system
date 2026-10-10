@@ -16,7 +16,8 @@ const itemSchema = z.object({
 });
 
 const requestSchema = z.object({
-  project_id: z.string().min(1, 'Project is required'),
+  project_id: z.string().min(1, 'Project is required').or(z.literal('new')),
+  new_project_name: z.string().optional(),
   category_id: z.string().min(1, 'Category is required'),
   priority: z.enum(['Normal', 'Urgent']),
   payee_name: z.string().min(1, 'Payee name is required'),
@@ -30,6 +31,9 @@ const requestSchema = z.object({
   is_advance: z.boolean(),
   advance_retirement_deadline: z.string().optional(),
   items: z.array(itemSchema).min(1, 'At least one item is required'),
+}).refine(data => data.project_id !== 'new' || (data.project_id === 'new' && data.new_project_name?.trim()), {
+  message: "New project name is required",
+  path: ["new_project_name"]
 });
 
 export default function RequestCreatePage() {
@@ -76,6 +80,7 @@ export default function RequestCreatePage() {
   });
   
   const watchCurrency = watch('currency');
+  const watchProject = watch('project_id');
   const watchIsAdvance = watch('is_advance');
   const watchItems = watch('items');
   
@@ -118,7 +123,7 @@ export default function RequestCreatePage() {
     // Convert string IDs to integers
     const payload = {
       ...data,
-      project_id: parseInt(data.project_id),
+      project_id: data.project_id === 'new' ? null : parseInt(data.project_id),
       category_id: parseInt(data.category_id),
     };
     

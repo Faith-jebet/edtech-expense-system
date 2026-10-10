@@ -61,7 +61,7 @@ class SettingsService:
         
         # Default limits
         return {
-            'band_1': {'max': 100, 'roles': ['Operation Manager', 'Accountant']},
-            'band_2': {'max': 500, 'roles': ['Operation Manager', 'Director', 'Managing Director']},
-            'band_3': {'max': None, 'roles': ['Director', 'Managing Director']}
+            'band_1': {'max': 100, 'roles': ['Operation Manager']},
+            'band_2': {'max': 500, 'roles': ['Director']},
+            'band_3': {'max': None, 'roles': ['Managing Director']}
         }

@@ -48,7 +48,7 @@ class WorkflowService:
         return True, "Request submitted successfully", expense_request
     
     @staticmethod
-    def verify_request(expense_request, user, ip_address=None):
+    def verify_request(expense_request, user, comments=None, ip_address=None):
         """
         Verify a submitted request (Accountant).
         Returns (success: bool, message: str, request: ExpenseRequest|None)
@@ -59,6 +59,29 @@ class WorkflowService:
         
         if not can_transition:
             return False, reason, None
+            
+        # Determine next manager based on amount
+        amount_usd = float(expense_request.total_amount_usd)
+        if amount_usd <= 100:
+            next_manager = "Operations Manager"
+        elif amount_usd <= 500:
+            next_manager = "Director"
+        else:
+            next_manager = "Managing Director"
+            
+        routing_note = f"[System: Routed to {next_manager} for approval]"
+        full_comments = f"{comments}\n\n{routing_note}" if comments else routing_note
+
+        # Create approval record
+        from app.models import Approval
+        approval = Approval(
+            request_id=expense_request.id,
+            approver_id=user.id,
+            decision='Verified',
+            comments=full_comments,
+            ip_address=ip_address
+        )
+        db.session.add(approval)
         
         # Update status
         old_status = expense_request.status
@@ -74,7 +97,7 @@ class WorkflowService:
             action=AuditLog.ACTION_STATUS_CHANGE,
             entity_type='ExpenseRequest',
             entity_id=expense_request.id,
-            note=f"Request verified by {user.full_name}",
+            note=f"Request verified by {user.full_name}. Comments: {comments or 'None'}",
             ip_address=ip_address
         )
         db.session.commit()
@@ -198,12 +221,19 @@ class WorkflowService:
         Execute payment (Paying Officer).
         Returns (success: bool, message: str, payment: Payment|None)
         """
-        can_transition, reason = expense_request.can_transition_to(
-            ExpenseRequest.STATUS_PAID, user
-        )
+        # Determine if this payment completes the full requested amount
+        current_paid = sum(p.actual_amount_paid for p in expense_request.payments) if expense_request.payments else 0
+        new_total_paid = float(current_paid) + float(actual_amount_paid)
+        
+        target_status = ExpenseRequest.STATUS_PAID if new_total_paid >= float(expense_request.total_amount) else ExpenseRequest.STATUS_PARTIALLY_PAID
+        
+        can_transition, reason = expense_request.can_transition_to(target_status, user)
         
         if not can_transition:
             return False, reason, None
+            
+        if new_total_paid > float(expense_request.total_amount):
+            return False, f"Total amount paid ({new_total_paid}) exceeds the requested amount ({expense_request.total_amount})", None
         
         # Create payment record
         from app.models import Payment
@@ -220,10 +250,11 @@ class WorkflowService:
         
         # Update status
         old_status = expense_request.status
-        expense_request.status = ExpenseRequest.STATUS_PAID
-        expense_request.paid_at = datetime.utcnow()
+        expense_request.status = target_status
+        if target_status == ExpenseRequest.STATUS_PAID:
+            expense_request.paid_at = datetime.utcnow()
         
-        # Set SLA for receipt upload
+        # Set SLA for receipt upload (reset if multiple payments)
         receipt_sla_days = SettingsService.get('receipt_sla_days', 5)
         expense_request.receipt_due_date = datetime.utcnow() + timedelta(days=receipt_sla_days)
         
@@ -251,12 +282,15 @@ class WorkflowService:
         Attach payment proof/receipt.
         Records evidence while the request remains Paid until ledger posting.
         """
-        if not expense_request.payment:
+        if not expense_request.payments or expense_request.payments.count() == 0:
             return False, "No payment record found", None
         
+        from app.models import Payment
+        last_payment = expense_request.payments.order_by(db.desc(Payment.id)).first()
+        
         # Update payment record
-        expense_request.payment.receipt_attached = True
-        expense_request.payment.receipt_attachment_id = attachment.id
+        last_payment.receipt_attached = True
+        last_payment.receipt_attachment_id = attachment.id
         
         db.session.commit()
         
@@ -290,11 +324,13 @@ class WorkflowService:
         if not can_transition:
             return False, reason, None
         
-        # Update payment record
-        expense_request.payment.ledger_reference = ledger_reference
-        expense_request.payment.posted_by_id = user.id
-        expense_request.payment.posted_at = datetime.utcnow()
-        expense_request.payment.posting_notes = posting_notes
+        # Update payment records
+        for payment in expense_request.payments:
+            if not payment.ledger_reference:
+                payment.ledger_reference = ledger_reference
+                payment.posted_by_id = user.id
+                payment.posted_at = datetime.utcnow()
+                payment.posting_notes = posting_notes
         
         # Update status
         old_status = expense_request.status

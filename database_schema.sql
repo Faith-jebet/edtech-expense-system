@@ -376,9 +376,9 @@ DELIMITER ;
 -- DEFAULT DATA: System settings
 -- =====================================================
 INSERT INTO `settings` (`key_name`, `value`, `description`) VALUES
-('approval_threshold_manager', '100', 'Maximum amount (USD) Manager can approve'),
+('approval_threshold_manager', '100', 'Maximum amount (USD) Operation Manager can approve'),
 ('approval_threshold_director', '500', 'Maximum amount (USD) Director can approve'),
-('approval_threshold_md', '999999', 'Maximum amount (USD) Managing Director can approve'),
+('approval_threshold_md', '500', 'Minimum amount (USD) requiring Managing Director approval'),
 ('payment_tolerance_percent', '2', 'Allowed variance between approved and actual amount (%)'),
 ('advance_retirement_days', '30', 'Default days to retire an advance'),
 ('company_name', 'Milestone EdTech Solutions Ltd', 'Company name for documents'),

@@ -1,4 +1,4 @@
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { expenseRequests } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -76,13 +76,22 @@ export default function RequestDetailPage() {
   });
   
   const verifyMutation = useMutation({
-    mutationFn: () => expenseRequests.verify(id),
+    mutationFn: (data) => expenseRequests.verify(id, data),
     onSuccess: () => {
-      toast.success('Request verified successfully');
+      if (decision === 'Verified') {
+        const nextManager = parseFloat(request?.total_amount_usd) <= 100 ? 'Operations Manager' : 
+                            parseFloat(request?.total_amount_usd) <= 500 ? 'Director' : 
+                            'Managing Director';
+        toast.success(`Request verified successfully! Forwarded to ${nextManager} for approval.`);
+      } else {
+        toast.success('Request rejected');
+      }
+      setShowApprovalModal(false);
+      setComments('');
       queryClient.invalidateQueries(['expense-request', id]);
     },
     onError: (error) => {
-      toast.error(error.response?.data?.error || 'Failed to verify');
+      toast.error(error.response?.data?.error || 'Action failed');
     },
   });
   
@@ -198,10 +207,10 @@ export default function RequestDetailPage() {
   const canSubmit = request.status === 'Draft' && request.requester_id === user?.id;
   const canVerify = request.status === 'Submitted' && user?.role === 'Accountant' && request.requester_id !== user?.id;
   const canApprove = request.status === 'Verified' &&
-    ['Director', 'Managing Director'].includes(user?.role) &&
+    ['Director', 'Managing Director', 'Operation Manager', 'Operations Manager', 'Manager'].includes(user?.role) &&
     request.requester_id !== user?.id;
-  const canPay = request.status === 'Approved' && user?.role === 'Paying Officer' && request.requester_id !== user?.id;
-  const canUploadProof = request.status === 'Paid' && user?.role === 'Paying Officer' && request.requester_id !== user?.id;
+  const canPay = ['Approved', 'Partially Paid'].includes(request.status) && user?.role === 'Paying Officer' && request.requester_id !== user?.id;
+  const canUploadProof = ['Paid', 'Partially Paid'].includes(request.status) && user?.role === 'Paying Officer' && request.requester_id !== user?.id;
   const canUploadSupportingDocument = ['Draft', 'Submitted', 'Rejected'].includes(request.status) &&
     request.requester_id === user?.id;
   const hasPaymentEvidence = request.attachments?.some(
@@ -211,11 +220,29 @@ export default function RequestDetailPage() {
     user?.role === 'Accountant' && request.requester_id !== user?.id;
   const canClose = request.status === 'Posted' && user?.role === 'Accountant' && request.requester_id !== user?.id;
   
+  const location = useLocation();
+  
+  let defaultBack = '/requests';
+  if (user?.role === 'Accountant') {
+    defaultBack = ['Submitted', 'Paid'].includes(request.status) && request.requester_id !== user?.id ? '/my-tasks' : '/requests';
+  } else if (['Director', 'Managing Director', 'Operation Manager', 'Operations Manager', 'Manager'].includes(user?.role)) {
+    defaultBack = request.status === 'Verified' && request.requester_id !== user?.id ? '/my-tasks' : '/requests';
+  } else if (user?.role === 'Paying Officer') {
+    defaultBack = ['Approved', 'Partially Paid'].includes(request.status) && request.requester_id !== user?.id ? '/my-tasks' : '/requests';
+  }
+
+  const backPath = location.state?.from || defaultBack;
+  
+  let backText = 'Back';
+  if (backPath === '/my-tasks') backText = 'Back to Tasks';
+  else if (backPath === '/requests') backText = 'Back to Requests';
+  else if (backPath === '/') backText = 'Back to Dashboard';
+
   return (
     <div>
-      <Link to="/requests" className="inline-flex items-center gap-2 text-brand hover:text-brand-dark mb-4">
+      <Link to={backPath} className="inline-flex items-center gap-2 text-brand hover:text-brand-dark mb-4">
         <ArrowLeft size={18} />
-        Back to Requests
+        {backText}
       </Link>
       
       <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-6">
@@ -269,14 +296,28 @@ export default function RequestDetailPage() {
             )}
             
             {canVerify && (
-              <button
-                onClick={() => verifyMutation.mutate()}
-                disabled={verifyMutation.isPending}
-                className="btn-accent flex items-center gap-2"
-              >
-                <CheckCircle size={18} />
-                Verify Request
-              </button>
+              <>
+                <button
+                  onClick={() => {
+                    setDecision('Verified');
+                    setShowApprovalModal(true);
+                  }}
+                  className="btn-accent flex items-center gap-2"
+                >
+                  <CheckCircle size={18} />
+                  Verify Request
+                </button>
+                <button
+                  onClick={() => {
+                    setDecision('Rejected');
+                    setShowApprovalModal(true);
+                  }}
+                  className="btn-danger flex items-center gap-2"
+                >
+                  <XCircle size={18} />
+                  Reject Request
+                </button>
+              </>
             )}
             
             {canApprove && (
@@ -305,13 +346,25 @@ export default function RequestDetailPage() {
             )}
             
             {canPay && (
-              <button
-                onClick={() => setShowPaymentModal(true)}
-                className="btn-accent flex items-center gap-2"
-              >
-                <DollarSign size={18} />
-                Record Payment
-              </button>
+              <>
+                <button
+                  onClick={() => setShowPaymentModal(true)}
+                  className="btn-accent flex items-center gap-2"
+                >
+                  <DollarSign size={18} />
+                  Record Payment
+                </button>
+                <button
+                  onClick={() => {
+                    setDecision('Rejected');
+                    setShowApprovalModal(true);
+                  }}
+                  className="btn-danger flex items-center gap-2"
+                >
+                  <XCircle size={18} />
+                  Reject Request
+                </button>
+              </>
             )}
             
             {canUploadProof && (
@@ -491,39 +544,41 @@ export default function RequestDetailPage() {
           )}
           
           {/* Payment Details */}
-          {request.payment && (
+          {request.payments && request.payments.length > 0 && (
             <div className="card">
-              <h2 className="text-xl font-serif font-semibold mb-4">Payment Details</h2>
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <dt className="text-muted">Payment Reference</dt>
-                  <dd className="font-mono font-medium">{request.payment.payment_reference}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted">Amount Paid</dt>
-                  <dd className="font-medium">{formatCurrency(request.payment.actual_amount_paid, request.currency)}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted">Payment Date</dt>
-                  <dd className="font-medium">{new Date(request.payment.payment_date).toLocaleDateString()}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted">Paid By</dt>
-                  <dd className="font-medium">{request.payment.paid_by_name}</dd>
-                </div>
-                {request.payment.ledger_reference && (
-                  <>
-                    <div>
-                      <dt className="text-muted">Ledger Reference</dt>
-                      <dd className="font-mono font-medium">{request.payment.ledger_reference}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted">Posted By</dt>
-                      <dd className="font-medium">{request.payment.posted_by_name}</dd>
-                    </div>
-                  </>
-                )}
-              </dl>
+              <h2 className="text-xl font-serif font-semibold mb-4">Payment History</h2>
+              
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="py-2 px-3 font-medium text-muted">Date</th>
+                      <th className="py-2 px-3 font-medium text-muted">Reference</th>
+                      <th className="py-2 px-3 font-medium text-muted">Amount</th>
+                      <th className="py-2 px-3 font-medium text-muted">Paid By</th>
+                      <th className="py-2 px-3 font-medium text-muted">Ledger Ref</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {request.payments.map((payment, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50/50">
+                        <td className="py-2 px-3">{new Date(payment.payment_date).toLocaleDateString()}</td>
+                        <td className="py-2 px-3 font-mono text-xs">{payment.payment_reference}</td>
+                        <td className="py-2 px-3 font-medium">{formatCurrency(payment.actual_amount_paid, request.currency)}</td>
+                        <td className="py-2 px-3">{payment.paid_by_name}</td>
+                        <td className="py-2 px-3 font-mono text-xs">{payment.ledger_reference || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50 font-medium">
+                    <tr>
+                      <td colSpan="2" className="py-2 px-3 text-right">Total Paid:</td>
+                      <td className="py-2 px-3 text-brand">{formatCurrency(request.actual_amount_paid || 0, request.currency)}</td>
+                      <td colSpan="2"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -537,37 +592,72 @@ export default function RequestDetailPage() {
               {request.submitted_at && (
                 <div className="flex justify-between">
                   <span className="text-muted">Submitted</span>
-                  <span>{formatDateTime(request.submitted_at).split(',')[0]}</span>
+                  <span>{formatDateTime(request.submitted_at)}</span>
                 </div>
               )}
               {request.verified_at && (
-                <div className="flex justify-between">
-                  <span className="text-muted">Verified</span>
-                  <span>{formatDateTime(request.verified_at).split(',')[0]}</span>
+                <div className="flex flex-col">
+                  <div className="flex justify-between">
+                    <span className="text-muted">Verified</span>
+                    <span>{formatDateTime(request.verified_at)}</span>
+                  </div>
+                  {request.verified_by_name && (
+                    <span className="text-xs text-muted">by {request.verified_by_name}</span>
+                  )}
                 </div>
               )}
               {request.approved_at && (
-                <div className="flex justify-between">
-                  <span className="text-muted">Approved</span>
-                  <span>{formatDateTime(request.approved_at).split(',')[0]}</span>
+                <div className="flex flex-col">
+                  <div className="flex justify-between">
+                    <span className="text-muted">Approved</span>
+                    <span>{formatDateTime(request.approved_at)}</span>
+                  </div>
+                  {request.approved_by_name && (
+                    <span className="text-xs text-muted">by {request.approved_by_name}</span>
+                  )}
                 </div>
               )}
               {request.paid_at && (
-                <div className="flex justify-between">
-                  <span className="text-muted">Paid</span>
-                  <span>{formatDateTime(request.paid_at).split(',')[0]}</span>
+                <div className="flex flex-col">
+                  <div className="flex justify-between">
+                    <span className="text-muted">Paid</span>
+                    <span>{formatDateTime(request.paid_at)}</span>
+                  </div>
+                  {request.paid_by_name && (
+                    <span className="text-xs text-muted">by {request.paid_by_name}</span>
+                  )}
                 </div>
               )}
               {request.posted_at && (
-                <div className="flex justify-between">
-                  <span className="text-muted">Posted</span>
-                  <span>{formatDateTime(request.posted_at).split(',')[0]}</span>
+                <div className="flex flex-col">
+                  <div className="flex justify-between">
+                    <span className="text-muted">Posted</span>
+                    <span>{formatDateTime(request.posted_at)}</span>
+                  </div>
+                  {request.posted_by_name && (
+                    <span className="text-xs text-muted">by {request.posted_by_name}</span>
+                  )}
                 </div>
               )}
               {request.closed_at && (
-                <div className="flex justify-between">
-                  <span className="text-muted">Closed</span>
-                  <span>{formatDateTime(request.closed_at).split(',')[0]}</span>
+                <div className="flex flex-col">
+                  <div className="flex justify-between">
+                    <span className="text-muted">Closed</span>
+                    <span>{formatDateTime(request.closed_at)}</span>
+                  </div>
+                  {request.closed_by_name && (
+                    <span className="text-xs text-muted">by {request.closed_by_name}</span>
+                  )}
+                </div>
+              )}
+              {['Verified', 'Approved', 'Partially Paid', 'Paid', 'Posted', 'Closed'].includes(request.status) && (
+                <div className="flex flex-col mt-2 pt-2 border-t border-gray-100">
+                  <span className="text-muted text-xs">Designated Approver Group:</span>
+                  <span className="font-medium text-brand text-sm">
+                    {parseFloat(request.total_amount_usd) <= 100 ? 'Operations Manager / Manager' : 
+                     parseFloat(request.total_amount_usd) <= 500 ? 'Director' : 
+                     'Managing Director'}
+                  </span>
                 </div>
               )}
             </div>
@@ -581,7 +671,7 @@ export default function RequestDetailPage() {
                 {request.approvals.map((approval) => (
                   <div key={approval.id} className="border-l-2 border-brand pl-3">
                     <p className="font-medium text-sm">{approval.approver_name}</p>
-                    <p className={`text-xs ${approval.decision === 'Approved' ? 'text-success' : 'text-danger'}`}>
+                    <p className={`text-xs ${approval.decision === 'Approved' || approval.decision === 'Verified' ? 'text-success' : 'text-danger'}`}>
                       {approval.decision}
                     </p>
                     {approval.comments && (
@@ -609,7 +699,7 @@ export default function RequestDetailPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="card max-w-md w-full">
             <h3 className="text-xl font-serif font-semibold mb-4">
-              {decision === 'Approved' ? 'Approve Request' : 'Reject Request'}
+              {decision === 'Approved' ? 'Approve Request' : decision === 'Verified' ? 'Verify Request' : 'Reject Request'}
             </h3>
             
             <div className="mb-4">
@@ -621,7 +711,7 @@ export default function RequestDetailPage() {
                 onChange={(e) => setComments(e.target.value)}
                 rows={4}
                 className="input"
-                placeholder={decision === 'Approved' ? 'Optional comments...' : 'Please provide reason for rejection'}
+                placeholder={decision === 'Rejected' ? 'Please provide reason for rejection' : 'Optional comments...'}
               />
             </div>
             
@@ -632,16 +722,26 @@ export default function RequestDetailPage() {
                     toast.error('Rejection reason is required');
                     return;
                   }
-                  approveMutation.mutate({
+                  
+                  const payload = {
                     decision,
                     comments: comments.trim(),
                     rejection_reason: decision === 'Rejected' ? comments.trim() : undefined,
-                  });
+                  };
+
+                  if (decision === 'Verified') {
+                    verifyMutation.mutate(payload);
+                  } else if (decision === 'Rejected' && request.status === 'Submitted') {
+                    // if it's an accountant rejecting a submitted request
+                    verifyMutation.mutate(payload);
+                  } else {
+                    approveMutation.mutate(payload);
+                  }
                 }}
-                disabled={approveMutation.isPending}
-                className={`btn flex-1 ${decision === 'Approved' ? 'btn-accent' : 'btn-danger'}`}
+                disabled={approveMutation.isPending || verifyMutation.isPending}
+                className={`btn flex-1 ${(decision === 'Approved' || decision === 'Verified') ? 'btn-accent' : 'btn-danger'}`}
               >
-                {approveMutation.isPending ? 'Processing...' : `Confirm ${decision}`}
+                {(approveMutation.isPending || verifyMutation.isPending) ? 'Processing...' : `Confirm ${decision}`}
               </button>
               <button
                 onClick={() => {
@@ -663,7 +763,18 @@ export default function RequestDetailPage() {
           <div className="card max-w-md w-full">
             <h3 className="text-xl font-serif font-semibold mb-4">Record Payment</h3>
             
-            <form onSubmit={handleSubmitPayment((data) => paymentMutation.mutate(data))} className="space-y-4">
+            <form onSubmit={handleSubmitPayment((data) => {
+              const remaining = Number(request.total_amount) - Number(request.actual_amount_paid || 0);
+              if (Number(data.actual_amount_paid) > remaining) {
+                toast.error(`Amount cannot exceed the remaining balance (${remaining.toFixed(2)})`);
+                return;
+              }
+              if (Number(data.actual_amount_paid) <= 0) {
+                toast.error(`Amount must be greater than zero`);
+                return;
+              }
+              paymentMutation.mutate(data);
+            })} className="space-y-4">
               <div>
                 <label className="label">
                   Payment Reference / Transaction ID <span className="text-danger">*</span>
@@ -681,14 +792,15 @@ export default function RequestDetailPage() {
               
               <div>
                 <label className="label">
-                  Actual Amount Paid <span className="text-danger">*</span>
+                  Amount to Pay <span className="text-danger">*</span>
+                  <span className="text-xs text-muted ml-2">(Remaining: {(Number(request.total_amount) - Number(request.actual_amount_paid || 0)).toFixed(2)})</span>
                 </label>
                 <input
                   {...registerPayment('actual_amount_paid')}
                   type="number"
                   step="0.01"
                   className="input"
-                  placeholder={request.total_amount}
+                  defaultValue={(Number(request.total_amount) - Number(request.actual_amount_paid || 0)).toFixed(2)}
                 />
                 {paymentErrors.actual_amount_paid && (
                   <p className="error-message">{paymentErrors.actual_amount_paid.message}</p>

@@ -36,6 +36,7 @@ export default function MyTasksPage() {
                 <tr>
                   <th>Request ID</th>
                   <th>Requester</th>
+                  <th>Category</th>
                   <th>Amount</th>
                   <th>Submitted</th>
                   <th></th>
@@ -46,11 +47,12 @@ export default function MyTasksPage() {
                   <tr key={req.id}>
                     <td className="font-mono text-sm">{req.request_id}</td>
                     <td>{req.requester_name}</td>
+                    <td>{req.items?.[0]?.category_name || 'N/A'}</td>
                     <td>{formatCurrency(req.total_amount, req.currency)}</td>
                     <td>{formatDate(req.submitted_at)}</td>
                     <td>
                       <Link to={`/requests/${req.id}`} className="btn-primary text-sm">
-                        Verify
+                        Review
                       </Link>
                     </td>
                   </tr>
@@ -73,6 +75,7 @@ export default function MyTasksPage() {
                 <tr>
                   <th>Request ID</th>
                   <th>Requester</th>
+                  <th>Category</th>
                   <th>Amount (USD)</th>
                   <th>Verified</th>
                   <th></th>
@@ -83,11 +86,12 @@ export default function MyTasksPage() {
                   <tr key={req.id}>
                     <td className="font-mono text-sm">{req.request_id}</td>
                     <td>{req.requester_name}</td>
+                    <td>{req.items?.[0]?.category_name || 'N/A'}</td>
                     <td>{formatCurrency(req.total_amount_usd, 'USD')}</td>
                     <td>{formatDate(req.verified_at)}</td>
                     <td>
                       <Link to={`/requests/${req.id}`} className="btn-accent text-sm">
-                        Approve
+                        Review
                       </Link>
                     </td>
                   </tr>
@@ -110,6 +114,7 @@ export default function MyTasksPage() {
                 <tr>
                   <th>Request ID</th>
                   <th>Payee</th>
+                  <th>Category</th>
                   <th>Amount</th>
                   <th>Approved</th>
                   <th></th>
@@ -120,11 +125,12 @@ export default function MyTasksPage() {
                   <tr key={req.id}>
                     <td className="font-mono text-sm">{req.request_id}</td>
                     <td>{req.payee_name}</td>
+                    <td>{req.items?.[0]?.category_name || 'N/A'}</td>
                     <td>{formatCurrency(req.total_amount, req.currency)}</td>
                     <td>{formatDate(req.approved_at)}</td>
                     <td>
                       <Link to={`/requests/${req.id}`} className="btn-primary text-sm">
-                        Pay
+                        Review
                       </Link>
                     </td>
                   </tr>
@@ -147,6 +153,7 @@ export default function MyTasksPage() {
                 <tr>
                   <th>Request ID</th>
                   <th>Payee</th>
+                  <th>Category</th>
                   <th>Amount</th>
                   <th>Paid</th>
                   <th></th>
@@ -157,11 +164,12 @@ export default function MyTasksPage() {
                   <tr key={req.id}>
                     <td className="font-mono text-sm">{req.request_id}</td>
                     <td>{req.payee_name}</td>
+                    <td>{req.items?.[0]?.category_name || 'N/A'}</td>
                     <td>{formatCurrency(req.total_amount, req.currency)}</td>
                     <td>{formatDate(req.paid_at)}</td>
                     <td>
                       <Link to={`/requests/${req.id}`} className="btn-primary text-sm">
-                        Post
+                        Review
                       </Link>
                     </td>
                   </tr>

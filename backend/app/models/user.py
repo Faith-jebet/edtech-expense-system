@@ -59,9 +59,9 @@ class User(db.Model):
         if self.role in (self.ROLE_OPERATION_MANAGER, self.ROLE_MANAGER):
             return amount_usd <= 100
         elif self.role == self.ROLE_DIRECTOR:
-            return amount_usd <= 500
+            return 100 < amount_usd <= 500
         elif self.role == self.ROLE_MANAGING_DIRECTOR:
-            return True
+            return amount_usd > 500
         return False
     
     def can_verify(self):

@@ -153,6 +153,7 @@ export default function RequestListPage() {
                     <td>
                       <Link
                         to={`/requests/${request.id}`}
+                        state={{ from: '/requests' }}
                         className="text-brand hover:text-brand-dark text-sm font-medium"
                       >
                         View

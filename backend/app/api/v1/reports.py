@@ -31,13 +31,21 @@ def get_dashboard_stats():
     # My pending tasks
     my_tasks = 0
     if user.role == User.ROLE_ACCOUNTANT:
-        # Pending verification (Submitted) and Pending Ledger Posting (Paid)
-        my_tasks = ExpenseRequest.query.filter(
-            ExpenseRequest.status.in_([
-                ExpenseRequest.STATUS_SUBMITTED,
-                ExpenseRequest.STATUS_PAID
-            ])
+        # Pending verification (Submitted)
+        submitted_count = ExpenseRequest.query.filter(
+            ExpenseRequest.status == ExpenseRequest.STATUS_SUBMITTED,
+            ExpenseRequest.requester_id != user.id
         ).count()
+        # Pending Ledger Posting (Paid with receipt)
+        paid_requests = ExpenseRequest.query.filter(
+            ExpenseRequest.status == ExpenseRequest.STATUS_PAID,
+            ExpenseRequest.requester_id != user.id
+        ).all()
+        paid_count = sum(
+            1 for req in paid_requests 
+            if any(att.attachment_type in ['Receipt', 'Proof of Payment'] for att in req.attachments)
+        )
+        my_tasks = submitted_count + paid_count
     elif user.role in [User.ROLE_DIRECTOR, User.ROLE_MD, User.ROLE_OPERATION_MANAGER, User.ROLE_MANAGER]:
         # Pending approval
         verified_requests = ExpenseRequest.query.filter(
@@ -48,7 +56,7 @@ def get_dashboard_stats():
     elif user.role == User.ROLE_PAYING_OFFICER:
         # Pending payment
         my_tasks = ExpenseRequest.query.filter(
-            ExpenseRequest.status == ExpenseRequest.STATUS_APPROVED,
+            ExpenseRequest.status.in_([ExpenseRequest.STATUS_APPROVED, ExpenseRequest.STATUS_PARTIALLY_PAID]),
             ExpenseRequest.requester_id != user.id
         ).count()
     
@@ -157,10 +165,52 @@ def get_dashboard_stats():
         ExpenseRequest.created_at >= start_date
     ).group_by(ExpenseCategory.name).order_by(db.desc('total')).limit(5).all()
 
+    # Calculate role bottlenecks
+    ops_manager_tasks = ExpenseRequest.query.filter(
+        ExpenseRequest.status == ExpenseRequest.STATUS_VERIFIED,
+        ExpenseRequest.total_amount_usd <= 100
+    ).count()
+    
+    director_tasks = ExpenseRequest.query.filter(
+        ExpenseRequest.status == ExpenseRequest.STATUS_VERIFIED,
+        ExpenseRequest.total_amount_usd > 100,
+        ExpenseRequest.total_amount_usd <= 500
+    ).count()
+    
+    md_tasks = ExpenseRequest.query.filter(
+        ExpenseRequest.status == ExpenseRequest.STATUS_VERIFIED,
+        ExpenseRequest.total_amount_usd > 500
+    ).count()
+    
+    accountant_submitted = ExpenseRequest.query.filter(
+        ExpenseRequest.status == ExpenseRequest.STATUS_SUBMITTED
+    ).count()
+    
+    accountant_paid = ExpenseRequest.query.filter(
+        ExpenseRequest.status == ExpenseRequest.STATUS_PAID
+    ).all()
+    accountant_paid_ready = sum(
+        1 for req in accountant_paid
+        if any(att.attachment_type in ['Receipt', 'Proof of Payment'] for att in req.attachments)
+    )
+    
+    accountant_tasks = accountant_submitted + accountant_paid_ready
+    
+    paying_officer_tasks = ExpenseRequest.query.filter(
+        ExpenseRequest.status == ExpenseRequest.STATUS_APPROVED
+    ).count()
+
     return jsonify({
         'total_requests': total_requests,
         'pending_requests': pending_requests,
         'my_tasks': my_tasks,
+        'role_tasks': {
+            'Operations Manager': ops_manager_tasks,
+            'Director': director_tasks,
+            'Managing Director': md_tasks,
+            'Accountant': accountant_tasks,
+            'Paying Officer': paying_officer_tasks
+        },
         
         'total_expenses': float(total_expenses) if total_expenses else 0,
         'pending_amount': float(pending_amount) if pending_amount else 0,

@@ -4,7 +4,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from marshmallow import ValidationError
 from app import db
 from app.api.v1 import api_v1
-from app.models import ExpenseRequest, RequestItem, User, Project, ExpenseCategory, ExchangeRate, Attachment, AuditLog
+from app.models import ExpenseRequest, RequestItem, User, Project, ExpenseCategory, ExchangeRate, Attachment, AuditLog, Payment
 from app.schemas.expense_request_schema import (
     ExpenseRequestSchema, ExpenseRequestCreateSchema, 
     ApprovalActionSchema, PaymentExecutionSchema, LedgerPostingSchema
@@ -36,6 +36,7 @@ def serialize_expense_request(expense_request):
         'project_name': expense_request.project.name,
         'request_date': expense_request.request_date.isoformat(),
         'purpose': expense_request.purpose,
+        'business_justification': expense_request.purpose,
         'payee_name': expense_request.payee_name,
         'payment_method': expense_request.payment_method,
         'currency': expense_request.currency,
@@ -57,13 +58,13 @@ def serialize_expense_request(expense_request):
         'verified_by_name': expense_request.verified_by.full_name if expense_request.verified_by else None,
         'approved_by_id': expense_request.approved_by_id,
         'approved_by_name': expense_request.approved_by.full_name if expense_request.approved_by else None,
-        'paid_by_id': expense_request.paid_by_id,
-        'paid_by_name': expense_request.paid_by.full_name if expense_request.paid_by else None,
-        'payment_reference': expense_request.payment_reference,
-        'actual_amount_paid': str(expense_request.actual_amount_paid) if expense_request.actual_amount_paid else None,
-        'posted_by_id': expense_request.posted_by_id,
-        'posted_by_name': expense_request.posted_by.full_name if expense_request.posted_by else None,
-        'ledger_reference': expense_request.ledger_reference,
+        'paid_by_id': expense_request.payments.order_by(db.desc(Payment.id)).first().paid_by_id if expense_request.payments and expense_request.payments.count() > 0 else expense_request.paid_by_id,
+        'paid_by_name': expense_request.payments.order_by(db.desc(Payment.id)).first().paid_by.full_name if expense_request.payments and expense_request.payments.count() > 0 and expense_request.payments.order_by(db.desc(Payment.id)).first().paid_by else (expense_request.paid_by.full_name if expense_request.paid_by else None),
+        'payment_reference': ', '.join([p.payment_reference for p in expense_request.payments.all()]) if expense_request.payments and expense_request.payments.count() > 0 else expense_request.payment_reference,
+        'actual_amount_paid': str(sum(p.actual_amount_paid for p in expense_request.payments.all())) if expense_request.payments and expense_request.payments.count() > 0 else (str(expense_request.actual_amount_paid) if expense_request.actual_amount_paid else None),
+        'posted_by_id': expense_request.payments.order_by(db.desc(Payment.id)).first().posted_by_id if expense_request.payments and expense_request.payments.count() > 0 else expense_request.posted_by_id,
+        'posted_by_name': expense_request.payments.order_by(db.desc(Payment.id)).first().posted_by.full_name if expense_request.payments and expense_request.payments.count() > 0 and expense_request.payments.order_by(db.desc(Payment.id)).first().posted_by else (expense_request.posted_by.full_name if expense_request.posted_by else None),
+        'ledger_reference': expense_request.payments.order_by(db.desc(Payment.id)).first().ledger_reference if expense_request.payments and expense_request.payments.count() > 0 else expense_request.ledger_reference,
         'closed_by_id': expense_request.closed_by_id,
         'closed_by_name': expense_request.closed_by.full_name if expense_request.closed_by else None,
         'items': [{
@@ -85,7 +86,15 @@ def serialize_expense_request(expense_request):
             'uploaded_by_id': att.uploaded_by_id,
             'created_at': att.created_at.isoformat(),
             'download_url': f'/api/v1/expense-requests/{expense_request.id}/attachments/{att.id}/download'
-        } for att in expense_request.attachments]
+        } for att in expense_request.attachments],
+        'approvals': [{
+            'id': app.id,
+            'approver_id': app.approver_id,
+            'approver_name': app.approver.full_name if app.approver else None,
+            'decision': app.decision,
+            'comments': app.comments,
+            'created_at': app.created_at.isoformat()
+        } for app in expense_request.approvals]
     }
     
     return data
@@ -128,6 +137,47 @@ def list_expense_requests():
     if to_date:
         query = query.filter(ExpenseRequest.created_at <= datetime.fromisoformat(to_date))
     
+    # Role-based visibility
+    from app.models import Approval
+    if user.role != User.ROLE_ADMIN:
+        visibility_conditions = [ExpenseRequest.requester_id == user.id]
+        
+        if user.role == User.ROLE_ACCOUNTANT:
+            visibility_conditions.append(ExpenseRequest.status.in_([
+                ExpenseRequest.STATUS_SUBMITTED,
+                ExpenseRequest.STATUS_PAID,
+                ExpenseRequest.STATUS_POSTED,
+                ExpenseRequest.STATUS_CLOSED
+            ]))
+        elif user.role in [User.ROLE_OPERATION_MANAGER, User.ROLE_MANAGER]:
+            visibility_conditions.append(db.and_(
+                ExpenseRequest.status == ExpenseRequest.STATUS_VERIFIED,
+                ExpenseRequest.total_amount_usd <= 100
+            ))
+        elif user.role == User.ROLE_DIRECTOR:
+            visibility_conditions.append(db.and_(
+                ExpenseRequest.status == ExpenseRequest.STATUS_VERIFIED,
+                ExpenseRequest.total_amount_usd > 100,
+                ExpenseRequest.total_amount_usd <= 500
+            ))
+        elif user.role == User.ROLE_MD:
+            visibility_conditions.append(db.and_(
+                ExpenseRequest.status == ExpenseRequest.STATUS_VERIFIED,
+                ExpenseRequest.total_amount_usd > 500
+            ))
+        elif user.role == User.ROLE_PAYING_OFFICER:
+            visibility_conditions.append(ExpenseRequest.status.in_([
+                ExpenseRequest.STATUS_PARTIALLY_PAID,
+                ExpenseRequest.STATUS_PAID,
+                ExpenseRequest.STATUS_POSTED,
+                ExpenseRequest.STATUS_CLOSED
+            ]))
+            
+        # Also allow viewing if they've approved/verified it
+        visibility_conditions.append(ExpenseRequest.approvals.any(Approval.approver_id == user.id))
+        
+        query = query.filter(db.or_(*visibility_conditions))
+    
     # Pagination
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
@@ -158,10 +208,26 @@ def create_expense_request():
     except ValidationError as err:
         return jsonify({'error': 'Validation error', 'messages': err.messages}), 400
     
-    # Validate project exists
-    project = Project.query.get(data['project_id'])
-    if not project:
-        return jsonify({'error': 'Project not found'}), 404
+    # Validate project exists or create new
+    if data.get('new_project_name'):
+        from datetime import date
+        import random
+        new_code = f"NEW-{random.randint(1000, 9999)}"
+        project = Project(
+            code=new_code,
+            name=data['new_project_name'],
+            budget=0,
+            currency='USD',
+            start_date=date.today(),
+            is_active=True
+        )
+        db.session.add(project)
+        db.session.commit()
+        data['project_id'] = project.id
+    else:
+        project = Project.query.get(data.get('project_id'))
+        if not project:
+            return jsonify({'error': 'Project not found or new project name required'}), 404
     
     # Validate category exists
     category = ExpenseCategory.query.get(data['category_id'])
@@ -268,11 +334,27 @@ def verify_expense_request(id):
     current_user_id = get_jwt_identity()
     user = User.query.get(current_user_id)
     
+    try:
+        data = approval_schema.load(request.get_json())
+    except ValidationError as err:
+        return jsonify({'error': 'Validation error', 'messages': err.messages}), 400
+    
     expense_request = ExpenseRequest.query.get_or_404(id)
     
-    success, message, result = WorkflowService.verify_request(
-        expense_request, user, request.remote_addr
-    )
+    if data['decision'] == 'Verified':
+        success, message, result = WorkflowService.verify_request(
+            expense_request, user, 
+            comments=data.get('comments'),
+            ip_address=request.remote_addr
+        )
+    else:
+        if not data.get('rejection_reason') and not data.get('comments'):
+            return jsonify({'error': 'Rejection reason is required'}), 400
+        
+        reason = data.get('rejection_reason') or data.get('comments')
+        success, message, result = WorkflowService.reject_request(
+            expense_request, user, reason, request.remote_addr
+        )
     
     if not success:
         return jsonify({'error': message}), 400
@@ -341,12 +423,13 @@ def get_my_tasks():
     if user.role == User.ROLE_ACCOUNTANT:
         tasks['pending_verification'] = [
             serialize_expense_request(req) 
-            for req in ExpenseRequest.query.filter_by(status=ExpenseRequest.STATUS_SUBMITTED).all()
+            for req in ExpenseRequest.query.filter_by(status=ExpenseRequest.STATUS_SUBMITTED).order_by(ExpenseRequest.created_at.desc()).all()
+            if req.requester_id != user.id
         ]
         tasks['pending_posting'] = [
             serialize_expense_request(req)
-            for req in ExpenseRequest.query.filter_by(status=ExpenseRequest.STATUS_PAID).all()
-            if any(
+            for req in ExpenseRequest.query.filter_by(status=ExpenseRequest.STATUS_PAID).order_by(ExpenseRequest.created_at.desc()).all()
+            if req.requester_id != user.id and any(
                 attachment.attachment_type in ['Receipt', 'Proof of Payment']
                 for attachment in req.attachments
             )
@@ -354,7 +437,7 @@ def get_my_tasks():
     
     # Approvers: pending approval within their authority
     if user.role in [User.ROLE_DIRECTOR, User.ROLE_MANAGING_DIRECTOR, User.ROLE_OPERATION_MANAGER, User.ROLE_MANAGER]:
-        verified_requests = ExpenseRequest.query.filter_by(status=ExpenseRequest.STATUS_VERIFIED).all()
+        verified_requests = ExpenseRequest.query.filter_by(status=ExpenseRequest.STATUS_VERIFIED).order_by(ExpenseRequest.created_at.desc()).all()
         for req in verified_requests:
             # Check if user can approve this request
             can_approve, _ = req.can_transition_to(ExpenseRequest.STATUS_APPROVED, user)
@@ -365,7 +448,9 @@ def get_my_tasks():
     if user.role == User.ROLE_PAYING_OFFICER:
         tasks['pending_payment'] = [
             serialize_expense_request(req)
-            for req in ExpenseRequest.query.filter_by(status=ExpenseRequest.STATUS_APPROVED).all()
+            for req in ExpenseRequest.query.filter(
+                ExpenseRequest.status.in_([ExpenseRequest.STATUS_APPROVED, ExpenseRequest.STATUS_PARTIALLY_PAID])
+            ).order_by(ExpenseRequest.created_at.desc()).all()
         ]
     
     # My requests
@@ -462,6 +547,9 @@ def upload_attachment(id):
     
     if file_ext not in current_app.config['ALLOWED_EXTENSIONS']:
         return jsonify({'error': f'File type .{file_ext} not allowed'}), 400
+        
+    if attachment_type in ['Quotation', 'Invoice'] and file_ext not in ['pdf', 'doc', 'docx']:
+        return jsonify({'error': f'Quotations and Invoices must be PDF or Word documents. Image files ({file_ext}) cannot be processed.'}), 400
     
     # Check file size
     file.seek(0, os.SEEK_END)
@@ -470,6 +558,34 @@ def upload_attachment(id):
     
     if file_size > current_app.config['MAX_UPLOAD_SIZE']:
         return jsonify({'error': 'File too large (max 10MB)'}), 400
+        
+    # Content-based validation for Quotations and Invoices
+    if attachment_type in ['Quotation', 'Invoice']:
+        text_content = ""
+        try:
+            if file_ext == 'pdf':
+                import PyPDF2
+                reader = PyPDF2.PdfReader(file)
+                for page in reader.pages:
+                    text_content += page.extract_text().lower()
+            elif file_ext in ['doc', 'docx']:
+                import docx
+                doc = docx.Document(file)
+                for para in doc.paragraphs:
+                    text_content += para.text.lower()
+                    
+            file.seek(0) # Reset pointer
+            
+            # Check for keywords
+            keywords = ['quote', 'quotation', 'invoice', 'bill', 'receipt', 'estimate', 'amount', 'total']
+            found_keywords = sum(1 for kw in keywords if kw in text_content)
+            
+            if found_keywords < 2:
+                return jsonify({'error': 'The uploaded document does not appear to be a valid invoice or quotation. Please upload an official financial document.'}), 400
+                
+        except Exception as e:
+            file.seek(0)
+            return jsonify({'error': f'Could not read document contents to verify validity: {str(e)}'}), 400
     
     # Generate unique filename
     unique_filename = f"{uuid.uuid4().hex}_{filename}"
@@ -497,7 +613,7 @@ def upload_attachment(id):
     db.session.add(attachment)
     
     # If this is payment proof, update payment record and transition status
-    if attachment_type in ['Receipt', 'Proof of Payment'] and expense_request.status == ExpenseRequest.STATUS_PAID:
+    if attachment_type in ['Receipt', 'Proof of Payment'] and expense_request.status in [ExpenseRequest.STATUS_PAID, ExpenseRequest.STATUS_PARTIALLY_PAID]:
         success, message, result = WorkflowService.attach_payment_proof(
             expense_request, user, attachment, request.remote_addr
         )
@@ -629,7 +745,7 @@ def generate_cash_voucher(id):
     
     expense_request = ExpenseRequest.query.get_or_404(id)
     
-    if expense_request.payment_method != ExpenseRequest.PAYMENT_CASH:
+    if expense_request.payment_method != 'Cash':
         return jsonify({'error': 'Cash voucher only available for cash payments'}), 400
     
     # Create PDF in memory

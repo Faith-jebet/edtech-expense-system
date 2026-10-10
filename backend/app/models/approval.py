@@ -11,8 +11,9 @@ class Approval(db.Model):
     # Decision constants
     DECISION_APPROVED = 'Approved'
     DECISION_REJECTED = 'Rejected'
+    DECISION_VERIFIED = 'Verified'
     
-    DECISIONS = [DECISION_APPROVED, DECISION_REJECTED]
+    DECISIONS = [DECISION_APPROVED, DECISION_REJECTED, DECISION_VERIFIED]
     
     id = db.Column(db.Integer, primary_key=True)
     request_id = db.Column(db.Integer, db.ForeignKey('expense_requests.id'), nullable=False, index=True)

@@ -55,14 +55,14 @@ if request.requester_id == approver_id:
 
 | Amount | Framework Requirement | System Implementation | Code Reference |
 |--------|----------------------|----------------------|----------------|
-| Up to $100 | Operation Manager + Accountant | Auto-approved by Manager | `user.can_approve(amount)` |
-| $101 - $500 | Senior/Director approval | Requires Director approval | Approval threshold settings |
-| Above $500 | Director/MD final approval | Requires MD approval | Amount-based routing |
+| Up to $100 | Operation Manager approval | Requires Operation Manager approval | `user.can_approve(amount)` |
+| $101 - $500 | Director approval | Requires Director approval | Approval threshold settings |
+| Above $500 | Managing Director approval | Requires Managing Director approval | Amount-based routing |
 
 **Configuration** (in `settings` table):
-- `approval_threshold_manager = 500`
-- `approval_threshold_director = 2000`
-- `approval_threshold_md = 999999`
+- `approval_threshold_manager = 100`
+- `approval_threshold_director = 500`
+- `approval_threshold_md = 500`
 
 ---
 
